@@ -5,3 +5,4 @@ torch==2.2.0  # CPU-only, lightweight
 sentencepiece==0.1.99
 langdetect==1.0.9
 python-multipart==0.0.6
+sacremoses==0.0.53
