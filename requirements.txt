@@ -6,4 +6,4 @@ sentencepiece==0.1.99
 langdetect==1.0.9
 python-multipart==0.0.6
 sacremoses==0.0.53
-numpy==1.24.6
+numpy==1.23.5
