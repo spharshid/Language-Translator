@@ -1,9 +1,14 @@
+# app/main.py
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from transformers import MarianMTModel, MarianTokenizer
 from app.utils import detect_lang, LANG_MAP
 import torch
+import gc
+import os
+import time
+from typing import Tuple
 
 app = FastAPI(title="Language Translator")
 
@@ -15,22 +20,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Supported languages (all lightweight OPUS-MT targets)
+# Supported languages (keys of LANG_MAP)
 SUPPORTED_LANGS = list(LANG_MAP.keys())
 
-# Cache models for lightweight reuse
+# Max number of models to keep in memory at once (1 for low-RAM environments)
+MAX_MODEL_CACHE = int(os.getenv("MAX_MODEL_CACHE", "1"))
+
+# MODEL_CACHE stores { "src-tgt": (tokenizer, model, last_used_timestamp) }
 MODEL_CACHE = {}
 
-def get_model(src: str, tgt: str):
-    """Load model/tokenizer for a source-target pair, cached."""
+def free_model_memory(key: str):
+    """Delete a cached model to free memory."""
+    try:
+        tokenizer, model, _ = MODEL_CACHE.pop(key)
+        # try to delete references and run GC
+        del tokenizer
+        del model
+        gc.collect()
+        time.sleep(0.1)
+    except Exception:
+        pass
+
+def evict_if_needed():
+    """Ensure MODEL_CACHE size <= MAX_MODEL_CACHE by evicting least recently used."""
+    while len(MODEL_CACHE) > MAX_MODEL_CACHE:
+        # find oldest entry
+        oldest_key = min(MODEL_CACHE.items(), key=lambda kv: kv[1][2])[0]
+        free_model_memory(oldest_key)
+
+def get_model(src: str, tgt: str) -> Tuple:
+    """Load model/tokenizer for a source-target pair, cached. Evicts old models if needed."""
     key = f"{src}-{tgt}"
-    if key not in MODEL_CACHE:
-        model_name = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
-        tokenizer = MarianTokenizer.from_pretrained(model_name)
-        model = MarianMTModel.from_pretrained(model_name)
-        model.to("cpu")
-        MODEL_CACHE[key] = (tokenizer, model)
-    return MODEL_CACHE[key]
+    if key in MODEL_CACHE:
+        tokenizer, model, _ = MODEL_CACHE[key]
+        # update last used timestamp
+        MODEL_CACHE[key] = (tokenizer, model, time.time())
+        return tokenizer, model
+
+    # If cache full, evict LRU
+    if len(MODEL_CACHE) >= MAX_MODEL_CACHE:
+        evict_if_needed()
+
+    # load model (this may use significant memory)
+    model_name = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
+    tokenizer = MarianTokenizer.from_pretrained(model_name)
+    model = MarianMTModel.from_pretrained(model_name)
+    model.to("cpu")
+    MODEL_CACHE[key] = (tokenizer, model, time.time())
+    return tokenizer, model
 
 # Request schema
 class TranslateRequest(BaseModel):
@@ -55,19 +92,30 @@ def translate(req: TranslateRequest):
     if src not in SUPPORTED_LANGS:
         src = "en"
 
-    # Skip translation if source = target
+    # Skip translation if source == target
     if src == target:
         return {"translated": text}
 
-    # Load appropriate OPUS-MT model
-    tokenizer, model = get_model(src, target)
+    try:
+        tokenizer, model = get_model(src, target)
+    except Exception as e:
+        # likely model doesn't exist or download error
+        return {"error": f"Failed to load model for {src}->{target}: {str(e)}"}
 
-    # Tokenize input
-    inputs = tokenizer(text, return_tensors="pt", padding=True)
+    # Tokenize and infer
+    try:
+        inputs = tokenizer(text, return_tensors="pt", padding=True)
+        with torch.no_grad():
+            translated_tokens = model.generate(**inputs, max_length=128, num_beams=4, early_stopping=True)
+        translated_text = tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
+    except Exception as e:
+        # on inference error, try to free memory and return error
+        # attempt to free model memory
+        key = f"{src}-{target}"
+        if key in MODEL_CACHE:
+            free_model_memory(key)
+        return {"error": f"Inference failed: {str(e)}"}
 
-    # Generate translation
-    with torch.no_grad():
-        translated_tokens = model.generate(**inputs, max_length=128, num_beams=4, early_stopping=True)
-
-    translated_text = tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
+    # Optionally evict old models to keep memory low
+    evict_if_needed()
     return {"translated": translated_text.strip()}

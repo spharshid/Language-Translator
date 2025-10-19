@@ -1,3 +1,4 @@
+# app/utils.py
 from langdetect import detect
 
 # Map language codes to full names
