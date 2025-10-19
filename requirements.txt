@@ -1,7 +1,7 @@
 fastapi==0.95.2
 uvicorn[standard]==0.22.0
 transformers==4.40.0
-torch==2.2.0+cpu   # CPU-only, lightweight
+torch==2.2.0  # CPU-only, lightweight
 sentencepiece==0.1.99
 langdetect==1.0.9
 python-multipart==0.0.6
