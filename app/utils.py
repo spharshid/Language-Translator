@@ -9,7 +9,10 @@ LANG_MAP = {
     "de": "German",
     "it": "Italian",
     "pt": "Portuguese",
-    "nl": "Dutch"
+    "nl": "Dutch",
+    "zh": "Chinese",
+    "ar": "Arabic",
+    "ru": "Russsian"
 }
 
 # Detect source language
