@@ -6,12 +6,14 @@ LANG_MAP = {
     "en": "English",
     "fr": "French",
     "es": "Spanish",
+    "ar": "Arabic",
+    "sl": "Slovenian",
+    "ta": "Tamil",
     "de": "German",
     "it": "Italian",
     "pt": "Portuguese",
     "nl": "Dutch",
     "zh": "Chinese",
-    "ar": "Arabic",
     "ru": "Russsian"
 }
 
