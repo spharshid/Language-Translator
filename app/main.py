@@ -4,10 +4,11 @@ import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from transformers import MarianMTModel, MarianTokenizer
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import threading
 
 # Assuming 'app.utils' is in your project structure, kept as is
-from app.utils import detect_lang, LANG_MAP
+from app.utils import detect_lang, LANG_MAP, NLLB_MAP
 
 # ✅ Set cache for Hugging Face Spaces
 os.environ["TRANSFORMERS_CACHE"] = "/tmp/huggingface"
@@ -27,17 +28,18 @@ SUPPORTED_LANGS = list(LANG_MAP.keys())
 MODEL_CACHE = {}
 
 
-def get_model(src: str, tgt: str):
-    """Load and cache the model/tokenizer for source-target language pair."""
-    key = f"{src}-{tgt}"
-    if key not in MODEL_CACHE:
-        model_name = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
-        tokenizer = MarianTokenizer.from_pretrained(model_name)
-        model = MarianMTModel.from_pretrained(model_name)
+tokenizer_lock = threading.Lock()
+
+def get_model():
+    """Load and cache the nllb model/tokenizer."""
+    if "nllb" not in MODEL_CACHE:
+        model_name = "facebook/nllb-200-distilled-600M"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
         # Using a context manager for potential device placement if needed, but sticking to original 'cpu'
         model.to("cpu")
-        MODEL_CACHE[key] = (tokenizer, model)
-    return MODEL_CACHE[key]
+        MODEL_CACHE["nllb"] = (tokenizer, model)
+    return MODEL_CACHE["nllb"]
 
 
 class TranslateRequest(BaseModel):
@@ -83,13 +85,21 @@ def translate(req: TranslateRequest):
     if src == target:
         return {"translated": text}
 
-    tokenizer, model = get_model(src, target)
+    tokenizer, model = get_model()
 
     def do_translate(single_text: str) -> str:
-        inputs = tokenizer(single_text, return_tensors="pt", padding=True)
+        src_nllb = NLLB_MAP.get(src, "eng_Latn")
+        tgt_nllb = NLLB_MAP.get(target, "eng_Latn")
+        
+        with tokenizer_lock:
+            tokenizer.src_lang = src_nllb
+            inputs = tokenizer(single_text, return_tensors="pt", padding=True)
+            
+        forced_bos_token_id = tokenizer.convert_tokens_to_ids(tgt_nllb)
         with torch.no_grad():
             tokens = model.generate(
-                **inputs, max_length=128, num_beams=4, early_stopping=True
+                **inputs, max_length=128, num_beams=4, early_stopping=True,
+                forced_bos_token_id=forced_bos_token_id
             )
         return tokenizer.decode(tokens[0], skip_special_tokens=True).strip()
 

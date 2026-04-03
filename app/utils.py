@@ -14,7 +14,22 @@ LANG_MAP = {
     "pt": "Portuguese",
     "nl": "Dutch",
     "zh": "Chinese",
-    "ru": "Russsian"
+    "ru": "Russian"
+}
+
+NLLB_MAP = {
+    "en": "eng_Latn",
+    "fr": "fra_Latn",
+    "es": "spa_Latn",
+    "ar": "arb_Arab",
+    "sl": "slv_Latn",
+    "ta": "tam_Taml",
+    "de": "deu_Latn",
+    "it": "ita_Latn",
+    "pt": "por_Latn",
+    "nl": "nld_Latn",
+    "zh": "zho_Hans",
+    "ru": "rus_Cyrl"
 }
 
 # Detect source language
